@@ -234,7 +234,12 @@ export default function App() {
         supabase.from("drawings").select("*").order("created_at", { ascending: false }),
         supabase.from("clients").select("*").order("order_index", { ascending: true }),
       ]);
-      setDrawings(dData || []);
+      // stageフィールドを必ず配列として正規化
+      const normalized = (dData || []).map(d => ({
+        ...d,
+        stage: Array.isArray(d.stage) ? d.stage : (d.stage ? (typeof d.stage === "string" ? JSON.parse(d.stage) : [d.stage]) : []),
+      }));
+      setDrawings(normalized);
       const cNames = (cData || []).map(c => c.name);
       if (cNames.length > 0) {
         setClients(cNames);
@@ -321,12 +326,24 @@ export default function App() {
     setEditMode(true);
   };
   const saveEdit = async () => {
-    const { tagsStr, stages, ...rest } = editForm;
-    const updated = { ...rest, stage: stages, tags: tagsStr.split(",").map(t => t.trim()).filter(Boolean) };
+    const { tagsStr, stages, id, created_at, ...rest } = editForm;
+    const payload = {
+      ...rest,
+      stage: stages,
+      tags: tagsStr.split(",").map(t => t.trim()).filter(Boolean),
+    };
     showSave("saving");
-    const { error } = await supabase.from("drawings").update(updated).eq("id", updated.id);
-    if (!error) { setDrawings(ds => ds.map(d => d.id === updated.id ? updated : d)); setSelected(updated); setEditMode(false); showSave("saved"); }
-    else showSave("error");
+    const { error } = await supabase.from("drawings").update(payload).eq("id", id);
+    if (!error) {
+      const updatedRecord = { ...payload, stage: stages, id, created_at };
+      setDrawings(ds => ds.map(d => d.id === id ? updatedRecord : d));
+      setSelected(updatedRecord);
+      setEditMode(false);
+      showSave("saved");
+    } else {
+      console.error("saveEdit error:", error);
+      showSave("error");
+    }
   };
 
   const confirmDelete = (drawing) => setDeleteTarget(drawing);
