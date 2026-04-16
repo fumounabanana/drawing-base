@@ -216,6 +216,8 @@ export default function App() {
   const [showSidebar, setShowSidebar]     = useState(false);
   // ④ 客先最小化
   const [clientCollapsed, setClientCollapsed] = useState(false);
+  // ① 工事日程最小化
+  const [yearCollapsed, setYearCollapsed] = useState(false);
   const [deleteTarget, setDeleteTarget]   = useState(null);
   const [pwModal, setPwModal]             = useState(null);
   const [clientEdit, setClientEdit]       = useState({});
@@ -386,12 +388,22 @@ export default function App() {
     showSave("saved");
   };
 
-  const handleDragStart = (idx) => setDragIndex(idx);
-  const handleDragOver  = (e, idx) => { e.preventDefault(); setDragOver(idx); };
-  const handleDrop2     = (idx) => {
-    if (dragIndex === null || dragIndex === idx) { setDragIndex(null); setDragOver(null); return; }
+  const handleDragStart = (e, idx) => {
+    setDragIndex(idx);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(idx));
+  };
+  const handleDragOver  = (e, idx) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOver(idx);
+  };
+  const handleDrop2 = (e, idx) => {
+    e.preventDefault();
+    const from = dragIndex !== null ? dragIndex : parseInt(e.dataTransfer.getData("text/plain"));
+    if (isNaN(from) || from === idx) { setDragIndex(null); setDragOver(null); return; }
     const nc = [...clients];
-    const [removed] = nc.splice(dragIndex, 1);
+    const [removed] = nc.splice(from, 1);
     nc.splice(idx, 0, removed);
     requestClientAction("reorder", nc);
     setDragIndex(null); setDragOver(null);
@@ -420,7 +432,7 @@ export default function App() {
   });
 
   const handleFileDrop = useCallback(e => {
-    e.preventDefault(); setDragging(false);
+    e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) { files.forEach(addUploadFile); setShowUpload(true); }
   }, [pendingCategory]);
@@ -458,9 +470,14 @@ export default function App() {
         </button>
       ))}
 
-      {/* ⑦ 工事日程（年別） */}
-      <div style={{ padding:"20px 16px 8px",fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:"0.08em" }}>工事日程（年別）</div>
-      {["", ...YEARS.map(String)].map(y=>(
+      {/* ⑦ 工事日程（年別・折りたたみ対応） */}
+      <div
+        onClick={()=>setYearCollapsed(v=>!v)}
+        style={{ padding:"20px 16px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",userSelect:"none" }}>
+        <span style={{ fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:"0.08em" }}>工事日程（年別）</span>
+        <span style={{ color:"#475569",fontSize:12,lineHeight:1 }}>{yearCollapsed?"▶":"▼"}</span>
+      </div>
+      {!yearCollapsed && ["", ...YEARS.map(String)].map(y=>(
         <button key={y} onClick={()=>{setFilterYear(y);setShowSidebar(false);}}
           style={{ display:"block",width:"100%",textAlign:"left",padding:"9px 20px",background:filterYear===y?"#1d4ed8":"transparent",color:filterYear===y?"#fff":"#94a3b8",border:"none",cursor:"pointer",fontSize:13,borderLeft:filterYear===y?"3px solid #60a5fa":"3px solid transparent" }}>
           {y||"全て"}{y && <span style={{ float:"right",fontSize:11 }}>{drawings.filter(d=>d.scheduled_date?.startsWith(y)).length}</span>}
@@ -655,12 +672,9 @@ export default function App() {
   };
 
   return (
-    <div style={{ minHeight:"100vh",background:"#0f172a",color:"#e2e8f0",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif" }}
-      onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleFileDrop}>
+    <div style={{ minHeight:"100vh",background:"#0f172a",color:"#e2e8f0",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif" }}>
 
-      {dragging && <div style={{ position:"fixed",inset:0,background:"rgba(59,130,246,0.15)",border:"3px dashed #3b82f6",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:"#93c5fd",fontWeight:700,backdropFilter:"blur(4px)" }}>ここにドロップ</div>}
-
-      {showSidebar && (
+      {pwModal && <PasswordModal title={pwModal.action==="add"?"客先を追加":pwModal.action==="delete"?"客先を削除":pwModal.action==="reorder"?"並び順を保存":"変更を保存"} onConfirm={handlePwConfirm} onCancel={()=>setPwModal(null)}/> (
         <div style={{ position:"fixed",inset:0,zIndex:80,display:"flex" }} onClick={()=>setShowSidebar(false)}>
           <div style={{ width:250,background:"#1e293b",height:"100%",overflowY:"auto",padding:"16px 0",borderRight:"1px solid #334155" }} onClick={e=>e.stopPropagation()}>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 16px 12px" }}>
@@ -756,6 +770,8 @@ export default function App() {
       <PdfPreviewModal previewData={previewData} onClose={()=>setPreviewData(null)}/>
       {pwModal && <PasswordModal title={pwModal.action==="add"?"客先を追加":pwModal.action==="delete"?"客先を削除":pwModal.action==="reorder"?"並び順を保存":"変更を保存"} onConfirm={handlePwConfirm} onCancel={()=>setPwModal(null)}/>}
 
+      {showSidebar &&
+
       {/* 削除確認 */}
       {deleteTarget && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:20 }} onClick={()=>setDeleteTarget(null)}>
@@ -786,12 +802,12 @@ export default function App() {
             <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:16 }}>
               {clients.map((c,i)=>(
                 <div key={i}
-                  draggable
-                  onDragStart={()=>handleDragStart(i)}
+                  draggable={true}
+                  onDragStart={e=>handleDragStart(e,i)}
                   onDragOver={e=>handleDragOver(e,i)}
-                  onDrop={()=>handleDrop2(i)}
+                  onDrop={e=>handleDrop2(e,i)}
                   onDragEnd={()=>{setDragIndex(null);setDragOver(null);}}
-                  style={{ display:"flex",gap:8,alignItems:"center",background:dragOver===i?"#1e3a5f":"transparent",borderRadius:8,padding:"2px 0",transition:"background 0.15s" }}>
+                  style={{ display:"flex",gap:8,alignItems:"center",background:dragOver===i?"#1e3a5f":dragIndex===i?"#0f2a1a":"transparent",borderRadius:8,padding:"2px 0",transition:"background 0.15s",opacity:dragIndex===i?0.5:1 }}>
                   <span style={{ color:"#475569",fontSize:18,cursor:"grab",padding:"0 4px",flexShrink:0 }}>⠿</span>
                   <input value={clientEdit[i]!==undefined?clientEdit[i]:c} onChange={e=>setClientEdit(prev=>({...prev,[i]:e.target.value}))} style={{ ...inp,flex:1,padding:"8px 10px" }}/>
                   <button onClick={()=>requestClientAction("delete",i)} style={{ background:"#7f1d1d",border:"none",borderRadius:8,color:"#fca5a5",width:34,height:34,cursor:"pointer",fontSize:15,flexShrink:0 }}>🗑</button>
@@ -837,7 +853,13 @@ export default function App() {
               <input ref={fileRef} type="file" accept=".pdf,.dwg,.dxf,.xlsx,.xls,.docx,.png,.jpg,.jpeg" multiple style={{ display:"none" }}
                 onChange={e=>{ Array.from(e.target.files).forEach(addUploadFile); e.target.value=""; }}/>
               {uploadFiles.length===0 ? (
-                <div style={{ padding:"16px 0",textAlign:"center",color:"#475569",fontSize:12 }}>ファイルを追加するか、ここにドロップ</div>
+                <div
+                  onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor="#3b82f6";}}
+                  onDragLeave={e=>{e.currentTarget.style.borderColor="#334155";}}
+                  onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor="#334155";Array.from(e.dataTransfer.files).forEach(addUploadFile);}}
+                  style={{ padding:"20px 0",textAlign:"center",color:"#475569",fontSize:12,border:"2px dashed #334155",borderRadius:8,margin:8,cursor:"pointer" }}>
+                  📁 ここにファイルをドロップ、または上の「追加」ボタンを使用
+                </div>
               ) : uploadFiles.map((uf,i)=>{
                 const cc=categoryColors[uf.category]||categoryColors["その他"];
                 return (
