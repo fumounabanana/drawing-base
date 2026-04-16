@@ -3,7 +3,13 @@ import { supabase } from "./supabase.js";
 
 const APP_NAME = "東海産業機械お客様管理";
 const CLIENT_PASSWORD = "2035";
-const DEFAULT_CLIENTS = ["ABC商事", "山田製作所", "東京物流", "大阪工業", "名古屋電機"];
+const DEFAULT_CLIENTS = [
+  { name: "ABC商事",   group_name: "", order_index: 0 },
+  { name: "山田製作所", group_name: "", order_index: 1 },
+  { name: "東京物流",  group_name: "", order_index: 2 },
+  { name: "大阪工業",  group_name: "", order_index: 3 },
+  { name: "名古屋電機", group_name: "", order_index: 4 },
+];
 const STAGES = ["製作", "現場工事", "メンテナンス", "部品", "見積り"];
 const FILE_CATEGORIES = ["図面", "見積書", "仕様書", "写真", "その他"];
 const currentYear = new Date().getFullYear();
@@ -35,28 +41,6 @@ const inp = {
   width:"100%", boxSizing:"border-box",
 };
 
-// --- utils ---
-async function renderPdf(url, containerEl, onProgress) {
-  const pdfjs = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs";
-  const resp  = await fetch(url);
-  const buf   = await resp.arrayBuffer();
-  const pdf   = await pdfjs.getDocument({ data: buf }).promise;
-  const total = pdf.numPages;
-  containerEl.innerHTML = "";
-  for (let i = 1; i <= total; i++) {
-    if (onProgress) onProgress(i, total);
-    const page = await pdf.getPage(i);
-    const vp   = page.getViewport({ scale: 1.6 });
-    const canvas = document.createElement("canvas");
-    canvas.width = vp.width; canvas.height = vp.height;
-    canvas.style.cssText = "width:100%;display:block;margin-bottom:8px;border-radius:4px;background:#fff;";
-    containerEl.appendChild(canvas);
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
-  }
-}
-
 function toStageArray(stage) {
   if (Array.isArray(stage)) return stage;
   if (!stage) return [];
@@ -66,8 +50,24 @@ function toStageArray(stage) {
   return [String(stage)];
 }
 
+// グループ化ヘルパー
+function groupClients(clients) {
+  const groups = {};
+  const ungrouped = [];
+  for (const c of clients) {
+    const g = c.group_name || "";
+    if (g) {
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(c);
+    } else {
+      ungrouped.push(c);
+    }
+  }
+  return { groups, ungrouped };
+}
+
 // ============================================================
-// 独立コンポーネント群（App外に定義 → 再レンダリングで再生成されない）
+// 独立コンポーネント
 // ============================================================
 
 function ProdBadge({ prodStatus, prodDate }) {
@@ -98,7 +98,7 @@ function DrawingCard({ drawing, onClick }) {
       {drawing.scheduled_date && <div style={{ fontSize:10,color:"#64748b",marginBottom:6 }}>📅 予定：{drawing.scheduled_date}</div>}
       <div style={{ marginBottom:7 }}><ProdBadge prodStatus={drawing.prod_status} prodDate={drawing.prod_date}/></div>
       <div style={{ display:"flex",gap:4,flexWrap:"wrap" }}>
-        {stages.map(s => { const sc=stageColors[s]||{}; return <span key={s} style={{ fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:20,background:sc.bg,color:sc.text }}>{s}</span>; })}
+        {stages.map(s=>{ const sc=stageColors[s]||{}; return <span key={s} style={{ fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:20,background:sc.bg,color:sc.text }}>{s}</span>; })}
       </div>
     </div>
   );
@@ -113,8 +113,27 @@ function PdfPreviewModal({ previewData, onClose }) {
     const isPdf = previewData.url.toLowerCase().includes(".pdf") || previewData.type==="PDF";
     if (!isPdf) return;
     setProgress({ cur:0, total:0 }); setError(null);
-    renderPdf(previewData.url, containerRef.current, (cur,total) => setProgress({ cur, total }))
-      .catch(() => setError("PDFの読み込みに失敗しました"));
+    (async () => {
+      try {
+        const pdfjs = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs";
+        const resp = await fetch(previewData.url);
+        const buf  = await resp.arrayBuffer();
+        const pdf  = await pdfjs.getDocument({ data: buf }).promise;
+        const total = pdf.numPages;
+        containerRef.current.innerHTML = "";
+        for (let i=1; i<=total; i++) {
+          setProgress({ cur:i, total });
+          const page = await pdf.getPage(i);
+          const vp   = page.getViewport({ scale:1.6 });
+          const canvas = document.createElement("canvas");
+          canvas.width=vp.width; canvas.height=vp.height;
+          canvas.style.cssText = "width:100%;display:block;margin-bottom:8px;border-radius:4px;background:#fff;";
+          containerRef.current.appendChild(canvas);
+          await page.render({ canvasContext:canvas.getContext("2d"), viewport:vp }).promise;
+        }
+      } catch { setError("PDFの読み込みに失敗しました"); }
+    })();
   }, [previewData]);
   if (!previewData) return null;
   const isPdf = previewData.url.toLowerCase().endsWith(".pdf") || previewData.type==="PDF";
@@ -153,20 +172,15 @@ function PdfPreviewModal({ previewData, onClose }) {
 
 function PasswordModal({ title, onConfirm, onCancel }) {
   const [pw, setPw]     = useState("");
-  const [error, setError] = useState(false);
-  const handle = () => {
-    if (pw === CLIENT_PASSWORD) { onConfirm(); }
-    else { setError(true); setPw(""); }
-  };
+  const [error, setErr] = useState(false);
+  const handle = () => { if (pw===CLIENT_PASSWORD) { onConfirm(); } else { setErr(true); setPw(""); } };
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:20 }} onClick={onCancel}>
       <div style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:16,padding:28,width:"100%",maxWidth:340 }} onClick={e=>e.stopPropagation()}>
         <div style={{ fontSize:24,textAlign:"center",marginBottom:10 }}>🔒</div>
         <div style={{ fontSize:15,fontWeight:700,color:"#f1f5f9",textAlign:"center",marginBottom:6 }}>{title}</div>
         <div style={{ fontSize:12,color:"#64748b",textAlign:"center",marginBottom:16 }}>パスワードを入力してください</div>
-        <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setError(false);}}
-          onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="パスワード" autoFocus
-          style={{ ...inp, marginBottom:6 }}/>
+        <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&handle()} placeholder="パスワード" autoFocus style={{ ...inp,marginBottom:6 }}/>
         {error && <div style={{ fontSize:11,color:"#ef4444",marginBottom:10,textAlign:"center" }}>パスワードが違います</div>}
         {!error && <div style={{ marginBottom:10 }}/>}
         <div style={{ display:"flex",gap:10 }}>
@@ -200,18 +214,15 @@ function StageSelector({ value, onChange }) {
   );
 }
 
-// ---- DetailSheet（Appの外に定義：これが②のキモ） ----
-function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClose, onStartEdit, onSaveEdit, onCancelEdit, onConfirmDelete, onUpdateProd, onPreview, onDownload }) {
+// DetailSheet（App外で定義）
+function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, onClose, onStartEdit, onSaveEdit, onCancelEdit, onConfirmDelete, onUpdateProd, onPreview, onDownload }) {
   if (!selected) return null;
   const d      = editMode ? editForm : selected;
   const files  = d.file_paths || [];
   const stages = toStageArray(d.stage);
-
   return (
-    <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:50,display:"flex",alignItems:"flex-end",justifyContent:"center" }}
-      onClick={onClose}>
-      <div style={{ background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"20px 18px 32px",width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)" }}
-        onClick={e=>e.stopPropagation()}>
+    <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:50,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={onClose}>
+      <div style={{ background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"20px 18px 32px",width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)" }} onClick={e=>e.stopPropagation()}>
         <div style={{ width:36,height:4,background:"#334155",borderRadius:2,margin:"0 auto 16px" }}/>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
           <div style={{ fontSize:11,color:"#64748b" }}>{selected.number} / {selected.revision}</div>
@@ -220,32 +231,19 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
             <button onClick={onClose} style={{ background:"#334155",border:"none",borderRadius:8,color:"#94a3b8",width:32,height:32,cursor:"pointer",fontSize:18 }}>×</button>
           </div>
         </div>
-
         {editMode ? (
-          /* ---- 編集モード ---- */
           <div>
-            {[
-              { label:"案件名 *",             key:"name" },
-              { label:"見積番号",             key:"number" },
-              { label:"改訂",                 key:"revision" },
-              { label:"担当者",               key:"uploader" },
-              { label:"タグ（カンマ区切り）", key:"tagsStr", placeholder:"搬送, ベルト" },
-            ].map(({ label, key, placeholder }) => (
+            {[{label:"案件名 *",key:"name"},{label:"見積番号",key:"number"},{label:"改訂",key:"revision"},{label:"担当者",key:"uploader"},{label:"タグ（カンマ区切り）",key:"tagsStr",placeholder:"搬送, ベルト"}].map(({label,key,placeholder})=>(
               <div key={key} style={{ marginBottom:10 }}>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>{label}</div>
-                <input
-                  value={editForm[key] || ""}
-                  onChange={e => setEditForm(prev => ({ ...prev, [key]: e.target.value }))}
-                  placeholder={placeholder || ""}
-                  style={inp}
-                />
+                <input value={editForm[key]||""} onChange={e=>setEditForm(prev=>({...prev,[key]:e.target.value}))} placeholder={placeholder||""} style={inp}/>
               </div>
             ))}
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10 }}>
               <div>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>客先</div>
                 <select value={editForm.client||""} onChange={e=>setEditForm(prev=>({...prev,client:e.target.value}))} style={inp}>
-                  {clients.map(c=><option key={c}>{c}</option>)}
+                  {clientNames.map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>
               <div>
@@ -281,12 +279,9 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
               <button onClick={onSaveEdit}   style={{ flex:1,background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"12px 0",fontWeight:700,fontSize:13,cursor:"pointer" }}>保存</button>
               <button onClick={onCancelEdit} style={{ flex:1,background:"#334155",color:"#94a3b8",border:"none",borderRadius:8,padding:"12px 0",fontWeight:600,fontSize:13,cursor:"pointer" }}>キャンセル</button>
             </div>
-            <button onClick={()=>onConfirmDelete(selected)} style={{ width:"100%",background:"transparent",color:"#ef4444",border:"1px solid #7f1d1d",borderRadius:8,padding:"11px 0",fontWeight:600,fontSize:13,cursor:"pointer" }}>
-              🗑 この案件を削除
-            </button>
+            <button onClick={()=>onConfirmDelete(selected)} style={{ width:"100%",background:"transparent",color:"#ef4444",border:"1px solid #7f1d1d",borderRadius:8,padding:"11px 0",fontWeight:600,fontSize:13,cursor:"pointer" }}>🗑 この案件を削除</button>
           </div>
         ) : (
-          /* ---- 閲覧モード ---- */
           <div>
             <div style={{ fontSize:18,fontWeight:700,color:"#f1f5f9",marginBottom:3 }}>{d.name}</div>
             <div style={{ fontSize:12,color:"#64748b",marginBottom:10 }}>🏢 {d.client}</div>
@@ -298,17 +293,11 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
             {d.scheduled_date && (
               <div style={{ background:"#0f172a",borderRadius:8,padding:"8px 12px",marginBottom:12,border:"1px solid #1e3a5f",display:"flex",alignItems:"center",gap:8 }}>
                 <span style={{ fontSize:14 }}>📅</span>
-                <div>
-                  <div style={{ fontSize:10,color:"#475569" }}>工事・製作予定日</div>
-                  <div style={{ fontSize:13,color:"#60a5fa",fontWeight:600 }}>{d.scheduled_date}</div>
-                </div>
+                <div><div style={{ fontSize:10,color:"#475569" }}>工事・製作予定日</div><div style={{ fontSize:13,color:"#60a5fa",fontWeight:600 }}>{d.scheduled_date}</div></div>
               </div>
             )}
-            {/* ファイル一覧 */}
             <div style={{ background:"#0f172a",borderRadius:10,border:"1px solid #1e3a5f",marginBottom:14,overflow:"hidden" }}>
-              <div style={{ padding:"10px 14px",fontSize:11,fontWeight:600,color:"#64748b",borderBottom:"1px solid #1e293b" }}>
-                添付ファイル（{files.length}件）
-              </div>
+              <div style={{ padding:"10px 14px",fontSize:11,fontWeight:600,color:"#64748b",borderBottom:"1px solid #1e293b" }}>添付ファイル（{files.length}件）</div>
               {files.length===0 ? (
                 <div style={{ padding:"14px",fontSize:12,color:"#475569",textAlign:"center" }}>ファイルなし</div>
               ) : files.map((f,i)=>{
@@ -331,7 +320,6 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
                 );
               })}
             </div>
-            {/* 製作状況 */}
             <div style={{ background:"#0f172a",borderRadius:10,padding:14,marginBottom:14,border:"1px solid #1e3a5f" }}>
               <div style={{ fontSize:11,color:"#64748b",marginBottom:10,fontWeight:600 }}>製作状況</div>
               <div style={{ display:"flex",gap:6,marginBottom:10,flexWrap:"wrap" }}>
@@ -345,15 +333,10 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
               </div>
               {d.prod_status==="done" && (<>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:4 }}>完了日</div>
-                <input type="date" value={d.prod_date||""} onChange={e=>onUpdateProd(d.id,"done",e.target.value)}
-                  style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"8px 12px",color:"#e2e8f0",fontSize:13,width:"100%",boxSizing:"border-box" }}/>
+                <input type="date" value={d.prod_date||""} onChange={e=>onUpdateProd(d.id,"done",e.target.value)} style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"8px 12px",color:"#e2e8f0",fontSize:13,width:"100%",boxSizing:"border-box" }}/>
               </>)}
-              {d.prod_status==="none" && (
-                <div style={{ fontSize:12,color:"#ef4444",padding:"6px 10px",background:"rgba(239,68,68,0.08)",borderRadius:8 }}>
-                  未製作{d.scheduled_date?` — 予定日：${d.scheduled_date}`:" — 完了後に更新してください"}
-                </div>
-              )}
-              {d.prod_status==="na" && <div style={{ fontSize:12,color:"#94a3b8",padding:"6px 10px",background:"rgba(148,163,184,0.08)",borderRadius:8 }}>製作対象外です</div>}
+              {d.prod_status==="none" && <div style={{ fontSize:12,color:"#ef4444",padding:"6px 10px",background:"rgba(239,68,68,0.08)",borderRadius:8 }}>未製作{d.scheduled_date?` — 予定日：${d.scheduled_date}`:" — 完了後に更新してください"}</div>}
+              {d.prod_status==="na"   && <div style={{ fontSize:12,color:"#94a3b8",padding:"6px 10px",background:"rgba(148,163,184,0.08)",borderRadius:8 }}>製作対象外です</div>}
             </div>
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12 }}>
               {[["更新日",d.date],["担当者",d.uploader]].map(([label,value])=>(
@@ -380,7 +363,7 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clients, onClo
 // ============================================================
 export default function App() {
   const [drawings, setDrawings]               = useState([]);
-  const [clients, setClients]                 = useState([]);
+  const [clients, setClients]                 = useState([]); // [{name, group_name, order_index}]
   const [loading, setLoading]                 = useState(true);
   const [saveStatus, setSaveStatus]           = useState("");
   const [search, setSearch]                   = useState("");
@@ -399,10 +382,13 @@ export default function App() {
   const [showSidebar, setShowSidebar]         = useState(false);
   const [clientCollapsed, setClientCollapsed] = useState(false);
   const [yearCollapsed, setYearCollapsed]     = useState(false);
+  // グループの折りたたみ状態 {groupName: bool}
+  const [groupCollapsed, setGroupCollapsed]   = useState({});
   const [deleteTarget, setDeleteTarget]       = useState(null);
   const [pwModal, setPwModal]                 = useState(null);
-  const [clientEdit, setClientEdit]           = useState({});
-  const [newClientName, setNewClientName]     = useState("");
+  // 客先管理の編集状態 [{name, group_name}]
+  const [clientEdits, setClientEdits]         = useState([]);
+  const [newClient, setNewClient]             = useState({ name:"", group_name:"" });
   const [dragIndex, setDragIndex]             = useState(null);
   const [dragOver, setDragOver]               = useState(null);
   const [uploadFiles, setUploadFiles]         = useState([]);
@@ -420,172 +406,145 @@ export default function App() {
         supabase.from("drawings").select("*").order("created_at", { ascending: false }),
         supabase.from("clients").select("*").order("order_index", { ascending: true }),
       ]);
-      const normalized = (dData || []).map(d => ({ ...d, stage: toStageArray(d.stage) }));
-      setDrawings(normalized);
-      const cNames = (cData || []).map(c => c.name);
-      if (cNames.length > 0) { setClients(cNames); }
-      else {
-        for (const name of DEFAULT_CLIENTS) await supabase.from("clients").insert({ name });
+      setDrawings((dData||[]).map(d=>({...d, stage: toStageArray(d.stage)})));
+      if ((cData||[]).length > 0) {
+        setClients(cData.map(c=>({ name:c.name, group_name:c.group_name||"", order_index:c.order_index||0 })));
+      } else {
+        for (const c of DEFAULT_CLIENTS) await supabase.from("clients").insert(c);
         setClients(DEFAULT_CLIENTS);
       }
     } catch(e) { console.error(e); }
     setLoading(false);
   };
 
-  const showSave = (status) => {
-    setSaveStatus(status);
-    if (status !== "saving") setTimeout(() => setSaveStatus(""), 2000);
-  };
+  const showSave = (s) => { setSaveStatus(s); if (s!=="saving") setTimeout(()=>setSaveStatus(""),2000); };
 
   const updateProd = async (id, prod_status, prod_date) => {
     showSave("saving");
     const { error } = await supabase.from("drawings").update({ prod_status, prod_date }).eq("id", id);
     if (!error) {
-      setDrawings(ds => ds.map(d => d.id===id ? {...d, prod_status, prod_date} : d));
-      setSelected(s => s?.id===id ? {...s, prod_status, prod_date} : s);
+      setDrawings(ds=>ds.map(d=>d.id===id?{...d,prod_status,prod_date}:d));
+      setSelected(s=>s?.id===id?{...s,prod_status,prod_date}:s);
       showSave("saved");
     } else showSave("error");
   };
 
-  const getFileUrl = (fp) => supabase.storage.from("drawings").getPublicUrl(fp).data.publicUrl;
-  const handlePreview  = (fp, fn) => setPreviewData({ url: getFileUrl(fp), filename: fn, type: fn.split(".").pop().toUpperCase() });
-  const handleDownload = (fp, fn) => {
-    const a = document.createElement("a"); a.href=getFileUrl(fp); a.download=fn; a.target="_blank";
+  const getFileUrl  = (fp) => supabase.storage.from("drawings").getPublicUrl(fp).data.publicUrl;
+  const handlePreview  = (fp,fn) => setPreviewData({ url:getFileUrl(fp), filename:fn, type:fn.split(".").pop().toUpperCase() });
+  const handleDownload = (fp,fn) => {
+    const a=document.createElement("a"); a.href=getFileUrl(fp); a.download=fn; a.target="_blank";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   };
 
-  const addUploadFile = useCallback((file) => {
-    setUploadFiles(prev => [...prev, { file, category: pendingCategory }]);
-  }, [pendingCategory]);
-  const removeUploadFile   = (idx) => setUploadFiles(prev => prev.filter((_,i)=>i!==idx));
-  const updateFileCategory = (idx, cat) => setUploadFiles(prev => prev.map((f,i)=>i===idx?{...f,category:cat}:f));
+  const addUploadFile = useCallback((file)=>setUploadFiles(prev=>[...prev,{file,category:pendingCategory}]),[pendingCategory]);
+  const removeUploadFile   = (idx) => setUploadFiles(prev=>prev.filter((_,i)=>i!==idx));
+  const updateFileCategory = (idx,cat) => setUploadFiles(prev=>prev.map((f,i)=>i===idx?{...f,category:cat}:f));
+
+  const clientNames = clients.map(c=>c.name);
 
   const handleUpload = async () => {
     if (!uploadForm.name) return;
     setUploading(true); showSave("saving");
-    const uploadedFiles = [];
-    for (const { file, category } of uploadFiles) {
+    const uploadedFiles=[];
+    for (const {file,category} of uploadFiles) {
       try {
-        const safeName = `${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-        const { error } = await supabase.storage.from("drawings").upload(safeName, file, { contentType: file.type });
-        if (!error) uploadedFiles.push({ path:safeName, name:file.name, size:`${(file.size/1024/1024).toFixed(1)}MB`, category, ext:file.name.split(".").pop().toUpperCase() });
+        const sn=`${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+        const {error}=await supabase.storage.from("drawings").upload(sn,file,{contentType:file.type});
+        if (!error) uploadedFiles.push({path:sn,name:file.name,size:`${(file.size/1024/1024).toFixed(1)}MB`,category,ext:file.name.split(".").pop().toUpperCase()});
       } catch {}
     }
-    const { error } = await supabase.from("drawings").insert({
-      name:           uploadForm.name,
-      number:         uploadForm.number || "",
-      client:         uploadForm.client || clients[0],
-      stage:          uploadForm.stages,
-      date:           new Date().toISOString().split("T")[0],
-      uploader:       "ユーザー",
-      type:           uploadedFiles[0]?.ext==="PDF" ? "PDF" : "CAD",
-      size:           uploadedFiles[0]?.size || "—",
-      revision:       "Rev.1",
-      tags:           uploadForm.tags.split(",").map(t=>t.trim()).filter(Boolean),
-      prod_status:    uploadForm.prod_status,
-      prod_date:      uploadForm.prod_date,
-      scheduled_date: uploadForm.scheduled_date || null,
-      has_file:       uploadedFiles.length > 0,
-      file_path:      uploadedFiles[0]?.path || null,
-      file_paths:     uploadedFiles,
+    const {error}=await supabase.from("drawings").insert({
+      name:uploadForm.name, number:uploadForm.number||"",
+      client:uploadForm.client||clientNames[0], stage:uploadForm.stages,
+      date:new Date().toISOString().split("T")[0], uploader:"ユーザー",
+      type:uploadedFiles[0]?.ext==="PDF"?"PDF":"CAD", size:uploadedFiles[0]?.size||"—",
+      revision:"Rev.1", tags:uploadForm.tags.split(",").map(t=>t.trim()).filter(Boolean),
+      prod_status:uploadForm.prod_status, prod_date:uploadForm.prod_date,
+      scheduled_date:uploadForm.scheduled_date||null,
+      has_file:uploadedFiles.length>0, file_path:uploadedFiles[0]?.path||null, file_paths:uploadedFiles,
     });
-    if (!error) { await loadAll(); showSave("saved"); }
-    else showSave("error");
+    if (!error) { await loadAll(); showSave("saved"); } else showSave("error");
     setShowUpload(false); setUploadFiles([]); setUploading(false);
-    setUploadForm({ name:"", number:"", client:clients[0]||"", stages:["製作"], tags:"", prod_status:"none", prod_date:"", scheduled_date:"" });
+    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"none",prod_date:"",scheduled_date:""});
   };
 
-  // ---- 編集 ----
-  const startEdit = (d) => {
-    setEditForm({ ...d, stages: toStageArray(d.stage), tagsStr: (d.tags||[]).join(", ") });
-    setEditMode(true);
-  };
-  const saveEdit = async () => {
-    const { tagsStr, stages, id, created_at } = editForm;
-    // 明示的に更新フィールドだけ指定（JSONBや不要フィールドを除外）
-    const payload = {
-      name:           editForm.name,
-      number:         editForm.number,
-      client:         editForm.client,
-      date:           editForm.date,
-      uploader:       editForm.uploader,
-      revision:       editForm.revision,
-      stage:          stages,
-      tags:           tagsStr.split(",").map(t=>t.trim()).filter(Boolean),
-      prod_status:    editForm.prod_status,
-      prod_date:      editForm.prod_date || null,
-      scheduled_date: editForm.scheduled_date || null,
+  const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditMode(true); };
+  const saveEdit  = async () => {
+    const {tagsStr,stages,id,created_at}=editForm;
+    const payload={
+      name:editForm.name, number:editForm.number, client:editForm.client,
+      date:editForm.date, uploader:editForm.uploader, revision:editForm.revision,
+      stage:stages, tags:tagsStr.split(",").map(t=>t.trim()).filter(Boolean),
+      prod_status:editForm.prod_status, prod_date:editForm.prod_date||null,
+      scheduled_date:editForm.scheduled_date||null,
     };
     showSave("saving");
-    const { error } = await supabase.from("drawings").update(payload).eq("id", id);
+    const {error}=await supabase.from("drawings").update(payload).eq("id",id);
     if (!error) {
-      const updated = { ...editForm, ...payload, id, created_at };
-      setDrawings(ds => ds.map(d => d.id===id ? updated : d));
-      setSelected(updated);
-      setEditMode(false);
-      showSave("saved");
-    } else {
-      console.error("saveEdit error:", error);
-      showSave("error");
-    }
+      const updated={...editForm,...payload,id,created_at};
+      setDrawings(ds=>ds.map(d=>d.id===id?updated:d));
+      setSelected(updated); setEditMode(false); showSave("saved");
+    } else { console.error("saveEdit:",error); showSave("error"); }
   };
-  const cancelEdit = () => setEditMode(false);
-
-  // ---- 削除 ----
-  const confirmDelete = (drawing) => setDeleteTarget(drawing);
+  const cancelEdit    = () => setEditMode(false);
+  const confirmDelete = (d) => setDeleteTarget(d);
   const executeDelete = async () => {
     if (!deleteTarget) return;
     for (const f of (deleteTarget.file_paths||[])) { try { await supabase.storage.from("drawings").remove([f.path]); } catch {} }
-    const { error } = await supabase.from("drawings").delete().eq("id", deleteTarget.id);
+    const {error}=await supabase.from("drawings").delete().eq("id",deleteTarget.id);
     if (!error) { setDrawings(ds=>ds.filter(d=>d.id!==deleteTarget.id)); setSelected(null); setEditMode(false); setDeleteTarget(null); showSave("saved"); }
   };
 
   // ---- 客先管理 ----
-  const requestClientAction = (action, data) => setPwModal({ action, data });
+  const openClientMgr = () => { setClientEdits(clients.map(c=>({...c}))); setShowClientMgr(true); };
+  const requestClientAction = (action,data) => setPwModal({action,data});
   const handlePwConfirm = () => {
     if (!pwModal) return;
-    const { action, data } = pwModal; setPwModal(null);
-    if (action==="add")     doAddClient(data);
-    else if (action==="delete")  doDeleteClient(data);
-    else if (action==="save")    doSaveClientEdits();
+    const {action,data}=pwModal; setPwModal(null);
+    if (action==="open")    openClientMgr();
+    else if (action==="save")    doSaveClients(data);
     else if (action==="reorder") doReorderClients(data);
   };
-  const doAddClient = async (name) => {
-    if (name && !clients.includes(name)) { await supabase.from("clients").insert({ name, order_index: clients.length }); setClients(prev=>[...prev, name]); }
-    setNewClientName("");
+
+  const doSaveClients = async (edits) => {
+    showSave("saving");
+    // 既存客先を全取得
+    const {data:existing}=await supabase.from("clients").select("*");
+    const existingNames=(existing||[]).map(c=>c.name);
+    const newNames=edits.map(c=>c.name);
+    // 削除
+    for (const name of existingNames) if (!newNames.includes(name)) await supabase.from("clients").delete().eq("name",name);
+    // 追加・更新
+    for (let i=0;i<edits.length;i++) {
+      const c=edits[i];
+      if (existingNames.includes(c.name)) {
+        await supabase.from("clients").update({group_name:c.group_name||"",order_index:i}).eq("name",c.name);
+      } else {
+        await supabase.from("clients").insert({name:c.name,group_name:c.group_name||"",order_index:i});
+      }
+    }
+    setClients(edits.map((c,i)=>({...c,order_index:i})));
+    setShowClientMgr(false); showSave("saved");
   };
-  const doDeleteClient = async (idx) => {
-    await supabase.from("clients").delete().eq("name", clients[idx]);
-    setClients(prev=>prev.filter((_,i)=>i!==idx));
-  };
-  const doSaveClientEdits = async () => {
-    const { data: existing } = await supabase.from("clients").select("*");
-    const existingNames = (existing||[]).map(c=>c.name);
-    let nc = [...clients];
-    Object.entries(clientEdit).forEach(([idx,name])=>{ if(name.trim()) nc[parseInt(idx)]=name.trim(); });
-    for (const name of nc) if (!existingNames.includes(name)) await supabase.from("clients").insert({ name });
-    for (const name of existingNames) if (!nc.includes(name)) await supabase.from("clients").delete().eq("name",name);
-    for (let i=0; i<nc.length; i++) await supabase.from("clients").update({ order_index:i }).eq("name",nc[i]);
-    setClients(nc); setClientEdit({}); setShowClientMgr(false); showSave("saved");
-  };
+
   const doReorderClients = async (newOrder) => {
     setClients(newOrder);
-    for (let i=0; i<newOrder.length; i++) await supabase.from("clients").update({ order_index:i }).eq("name",newOrder[i]);
+    for (let i=0;i<newOrder.length;i++) await supabase.from("clients").update({order_index:i}).eq("name",newOrder[i].name);
     showSave("saved");
   };
 
-  const handleDragStart = (e, idx) => { setDragIndex(idx); e.dataTransfer.effectAllowed="move"; e.dataTransfer.setData("text/plain",String(idx)); };
-  const handleDragOver  = (e, idx) => { e.preventDefault(); e.dataTransfer.dropEffect="move"; setDragOver(idx); };
-  const handleDrop2     = (e, idx) => {
+  const handleDragStart = (e,idx) => { setDragIndex(idx); e.dataTransfer.effectAllowed="move"; e.dataTransfer.setData("text/plain",String(idx)); };
+  const handleDragOver  = (e,idx) => { e.preventDefault(); e.dataTransfer.dropEffect="move"; setDragOver(idx); };
+  const handleDrop2     = (e,idx) => {
     e.preventDefault();
-    const from = dragIndex!==null ? dragIndex : parseInt(e.dataTransfer.getData("text/plain"));
+    const from=dragIndex!==null?dragIndex:parseInt(e.dataTransfer.getData("text/plain"));
     if (isNaN(from)||from===idx) { setDragIndex(null); setDragOver(null); return; }
-    const nc=[...clients]; const [rm]=nc.splice(from,1); nc.splice(idx,0,rm);
-    requestClientAction("reorder",nc); setDragIndex(null); setDragOver(null);
+    const nc=[...clientEdits]; const [rm]=nc.splice(from,1); nc.splice(idx,0,rm);
+    setClientEdits(nc); setDragIndex(null); setDragOver(null);
   };
 
-  const filtered = drawings.filter(d => {
-    const q = search.toLowerCase();
+  const filtered = drawings.filter(d=>{
+    const q=search.toLowerCase();
     if (q && !d.name?.toLowerCase().includes(q) && !d.number?.toLowerCase().includes(q) && !(d.tags||[]).some(t=>t.includes(q))) return false;
     if (filterClient!=="全て" && d.client!==filterClient) return false;
     if (filterStage && !toStageArray(d.stage).includes(filterStage)) return false;
@@ -599,23 +558,57 @@ export default function App() {
     return 0;
   });
 
+  const toggleGroup = (g) => setGroupCollapsed(prev=>({...prev,[g]:!prev[g]}));
+
+  // グループ化されたサイドバー客先リスト
+  const ClientList = () => {
+    const { groups, ungrouped } = groupClients(clients);
+    const allBtn = (
+      <button onClick={()=>{setFilterClient("全て");setShowSidebar(false);}}
+        style={{ display:"block",width:"100%",textAlign:"left",padding:"9px 20px",background:filterClient==="全て"?"#1d4ed8":"transparent",color:filterClient==="全て"?"#fff":"#94a3b8",border:"none",cursor:"pointer",fontSize:13,fontWeight:filterClient==="全て"?600:400,borderLeft:filterClient==="全て"?"3px solid #60a5fa":"3px solid transparent" }}>
+        全て<span style={{ float:"right",fontSize:11 }}>{drawings.length}</span>
+      </button>
+    );
+    const clientBtn = (c) => (
+      <button key={c.name} onClick={()=>{setFilterClient(c.name);setShowSidebar(false);}}
+        style={{ display:"block",width:"100%",textAlign:"left",padding:"9px 20px",background:filterClient===c.name?"#1d4ed8":"transparent",color:filterClient===c.name?"#fff":"#94a3b8",border:"none",cursor:"pointer",fontSize:13,fontWeight:filterClient===c.name?600:400,borderLeft:filterClient===c.name?"3px solid #60a5fa":"3px solid transparent" }}>
+        {c.name}<span style={{ float:"right",fontSize:11 }}>{drawings.filter(d=>d.client===c.name).length}</span>
+      </button>
+    );
+    return (
+      <>
+        {allBtn}
+        {/* グループあり */}
+        {Object.entries(groups).map(([gname, members])=>(
+          <div key={gname}>
+            <div onClick={()=>toggleGroup(gname)}
+              style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 16px 6px",cursor:"pointer",userSelect:"none" }}>
+              <span style={{ fontSize:11,fontWeight:700,color:"#60a5fa",letterSpacing:"0.04em" }}>🏭 {gname}</span>
+              <span style={{ color:"#475569",fontSize:11 }}>{groupCollapsed[gname]?"▶":"▼"}</span>
+            </div>
+            {!groupCollapsed[gname] && members.map(c=>(
+              <div key={c.name} style={{ paddingLeft:8 }}>{clientBtn(c)}</div>
+            ))}
+          </div>
+        ))}
+        {/* グループなし */}
+        {ungrouped.map(c=>clientBtn(c))}
+      </>
+    );
+  };
+
   const SidebarContent = () => (
     <>
       <div onClick={()=>setClientCollapsed(v=>!v)}
         style={{ padding:"0 16px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",userSelect:"none" }}>
         <span style={{ fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:"0.08em" }}>客先</span>
         <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-          <button onClick={e=>{e.stopPropagation();setShowSidebar(false);setShowClientMgr(true);}}
+          <button onClick={e=>{e.stopPropagation();requestClientAction("open",null);setShowSidebar(false);}}
             style={{ background:"none",border:"1px solid #1d4ed8",color:"#3b82f6",fontSize:10,cursor:"pointer",padding:"1px 6px",borderRadius:4 }}>管理</button>
           <span style={{ color:"#475569",fontSize:12 }}>{clientCollapsed?"▶":"▼"}</span>
         </div>
       </div>
-      {!clientCollapsed && ["全て",...clients].map(c=>(
-        <button key={c} onClick={()=>{setFilterClient(c);setShowSidebar(false);}}
-          style={{ display:"block",width:"100%",textAlign:"left",padding:"9px 20px",background:filterClient===c?"#1d4ed8":"transparent",color:filterClient===c?"#fff":"#94a3b8",border:"none",cursor:"pointer",fontSize:13,fontWeight:filterClient===c?600:400,borderLeft:filterClient===c?"3px solid #60a5fa":"3px solid transparent" }}>
-          {c}<span style={{ float:"right",fontSize:11 }}>{c==="全て"?drawings.length:drawings.filter(d=>d.client===c).length}</span>
-        </button>
-      ))}
+      {!clientCollapsed && <ClientList/>}
       <div style={{ padding:"20px 16px 8px",fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:"0.08em" }}>工程</div>
       {["",...STAGES].map(s=>(
         <button key={s} onClick={()=>{setFilterStage(s);setShowSidebar(false);}}
@@ -745,25 +738,17 @@ export default function App() {
         </main>
       </div>
 
-      {/* DetailSheetは外部コンポーネントとして呼び出し */}
-      <DetailSheet
-        selected={selected}
-        editMode={editMode}
-        editForm={editForm}
-        setEditForm={setEditForm}
-        clients={clients}
-        onClose={()=>{setSelected(null);setEditMode(false);}}
-        onStartEdit={startEdit}
-        onSaveEdit={saveEdit}
-        onCancelEdit={cancelEdit}
-        onConfirmDelete={confirmDelete}
-        onUpdateProd={updateProd}
-        onPreview={handlePreview}
-        onDownload={handleDownload}
-      />
+      <DetailSheet selected={selected} editMode={editMode} editForm={editForm} setEditForm={setEditForm}
+        clientNames={clientNames} onClose={()=>{setSelected(null);setEditMode(false);}}
+        onStartEdit={startEdit} onSaveEdit={saveEdit} onCancelEdit={cancelEdit}
+        onConfirmDelete={confirmDelete} onUpdateProd={updateProd}
+        onPreview={handlePreview} onDownload={handleDownload}/>
       <PdfPreviewModal previewData={previewData} onClose={()=>setPreviewData(null)}/>
-      {pwModal && <PasswordModal title={pwModal.action==="add"?"客先を追加":pwModal.action==="delete"?"客先を削除":pwModal.action==="reorder"?"並び順を保存":"変更を保存"} onConfirm={handlePwConfirm} onCancel={()=>setPwModal(null)}/>}
+      {pwModal && <PasswordModal
+        title={pwModal.action==="open"?"客先を管理":pwModal.action==="save"?"変更を保存":"並び順を保存"}
+        onConfirm={handlePwConfirm} onCancel={()=>setPwModal(null)}/>}
 
+      {/* 削除確認 */}
       {deleteTarget && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:20 }} onClick={()=>setDeleteTarget(null)}>
           <div style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:16,padding:28,width:"100%",maxWidth:380 }} onClick={e=>e.stopPropagation()}>
@@ -781,38 +766,64 @@ export default function App() {
         </div>
       )}
 
+      {/* 客先管理モーダル（グループ対応） */}
       {showClientMgr && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }} onClick={()=>setShowClientMgr(false)}>
-          <div style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"80vh",overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+          <div style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:16,padding:24,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
               <div style={{ fontSize:16,fontWeight:700,color:"#f1f5f9" }}>客先の管理 🔒</div>
               <button onClick={()=>setShowClientMgr(false)} style={{ background:"#334155",border:"none",borderRadius:8,color:"#94a3b8",width:30,height:30,cursor:"pointer",fontSize:16 }}>×</button>
             </div>
-            <div style={{ fontSize:11,color:"#475569",marginBottom:14 }}>⠿ をドラッグして並び順を変更できます</div>
+            <div style={{ fontSize:11,color:"#475569",marginBottom:14 }}>⠿ ドラッグで並び替え可。グループ名を同じにするとグループ化されます。</div>
+
+            {/* ヘッダー行 */}
+            <div style={{ display:"grid",gridTemplateColumns:"24px 1fr 1fr 34px",gap:8,padding:"0 4px 6px",fontSize:10,color:"#475569" }}>
+              <span/>
+              <span>客先名</span>
+              <span>グループ名（任意）</span>
+              <span/>
+            </div>
+
             <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:16 }}>
-              {clients.map((c,i)=>(
+              {clientEdits.map((c,i)=>(
                 <div key={i} draggable={true}
                   onDragStart={e=>handleDragStart(e,i)} onDragOver={e=>handleDragOver(e,i)}
                   onDrop={e=>handleDrop2(e,i)} onDragEnd={()=>{setDragIndex(null);setDragOver(null);}}
-                  style={{ display:"flex",gap:8,alignItems:"center",background:dragOver===i?"#1e3a5f":dragIndex===i?"#0f2a1a":"transparent",borderRadius:8,padding:"2px 0",transition:"background 0.15s",opacity:dragIndex===i?0.5:1 }}>
-                  <span style={{ color:"#475569",fontSize:18,cursor:"grab",padding:"0 4px",flexShrink:0 }}>⠿</span>
-                  <input value={clientEdit[i]!==undefined?clientEdit[i]:c} onChange={e=>setClientEdit(prev=>({...prev,[i]:e.target.value}))} style={{ ...inp,flex:1,padding:"8px 10px" }}/>
-                  <button onClick={()=>requestClientAction("delete",i)} style={{ background:"#7f1d1d",border:"none",borderRadius:8,color:"#fca5a5",width:34,height:34,cursor:"pointer",fontSize:15,flexShrink:0 }}>🗑</button>
+                  style={{ display:"grid",gridTemplateColumns:"24px 1fr 1fr 34px",gap:8,alignItems:"center",background:dragOver===i?"#1e3a5f":dragIndex===i?"#0f2a1a":"transparent",borderRadius:8,padding:"2px 4px",transition:"background 0.15s",opacity:dragIndex===i?0.5:1 }}>
+                  <span style={{ color:"#475569",fontSize:18,cursor:"grab",textAlign:"center" }}>⠿</span>
+                  <input value={c.name} onChange={e=>setClientEdits(prev=>prev.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                    placeholder="客先名" style={{ ...inp,padding:"7px 10px" }}/>
+                  <input value={c.group_name||""} onChange={e=>setClientEdits(prev=>prev.map((x,j)=>j===i?{...x,group_name:e.target.value}:x))}
+                    placeholder="例：トヨタ自動車" style={{ ...inp,padding:"7px 10px" }}/>
+                  <button onClick={()=>setClientEdits(prev=>prev.filter((_,j)=>j!==i))}
+                    style={{ background:"#7f1d1d",border:"none",borderRadius:8,color:"#fca5a5",width:34,height:34,cursor:"pointer",fontSize:14 }}>🗑</button>
                 </div>
               ))}
             </div>
+
+            {/* 新規追加 */}
             <div style={{ borderTop:"1px solid #334155",paddingTop:14,marginBottom:14 }}>
-              <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>客先を追加</div>
-              <div style={{ display:"flex",gap:8 }}>
-                <input value={newClientName} onChange={e=>setNewClientName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&requestClientAction("add",newClientName)} placeholder="例：株式会社〇〇" style={{ ...inp,flex:1,padding:"8px 10px" }}/>
-                <button onClick={()=>requestClientAction("add",newClientName)} style={{ background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:600,fontSize:13,cursor:"pointer",flexShrink:0 }}>追加</button>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:8 }}>客先を追加</div>
+              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8 }}>
+                <input value={newClient.name} onChange={e=>setNewClient(p=>({...p,name:e.target.value}))} placeholder="客先名 *" style={{ ...inp,padding:"8px 10px" }}/>
+                <input value={newClient.group_name} onChange={e=>setNewClient(p=>({...p,group_name:e.target.value}))} placeholder="グループ名（任意）" style={{ ...inp,padding:"8px 10px" }}/>
+                <button
+                  onClick={()=>{
+                    if (!newClient.name.trim()) return;
+                    setClientEdits(prev=>[...prev,{name:newClient.name.trim(),group_name:newClient.group_name.trim(),order_index:prev.length}]);
+                    setNewClient({name:"",group_name:""});
+                  }}
+                  style={{ background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:600,fontSize:13,cursor:"pointer",whiteSpace:"nowrap" }}>追加</button>
               </div>
             </div>
-            <button onClick={()=>requestClientAction("save",null)} style={{ width:"100%",background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"12px 0",fontWeight:700,fontSize:13,cursor:"pointer" }}>変更を保存</button>
+
+            <button onClick={()=>requestClientAction("save",clientEdits)}
+              style={{ width:"100%",background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"12px 0",fontWeight:700,fontSize:13,cursor:"pointer" }}>変更を保存</button>
           </div>
         </div>
       )}
 
+      {/* アップロード */}
       {showUpload && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:50,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={()=>setShowUpload(false)}>
           <div style={{ background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"20px 18px 32px",width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
@@ -867,8 +878,8 @@ export default function App() {
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10 }}>
               <div>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>客先</div>
-                <select value={uploadForm.client||clients[0]||""} onChange={e=>setUploadForm(p=>({...p,client:e.target.value}))} style={inp}>
-                  {clients.map(c=><option key={c}>{c}</option>)}
+                <select value={uploadForm.client||clientNames[0]||""} onChange={e=>setUploadForm(p=>({...p,client:e.target.value}))} style={inp}>
+                  {clientNames.map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>
               <div>
