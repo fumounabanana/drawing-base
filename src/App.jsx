@@ -574,7 +574,7 @@ export default function App() {
 
   const filtered = drawings.filter(d=>{
     const q=search.toLowerCase();
-    if (q && !d.name?.toLowerCase().includes(q) && !d.number?.toLowerCase().includes(q) && !(d.tags||[]).some(t=>t.includes(q))) return false;
+    if (q && !d.name?.toLowerCase().includes(q) && !d.number?.toLowerCase().includes(q) && !(d.tags||[]).some(t=>t.toLowerCase().includes(q))) return false;
     if (filterClient!=="全て" && d.client!==filterClient) return false;
     if (filterStage && !toStageArray(d.stage).includes(filterStage)) return false;
     if (filterProd && d.prod_status!==filterProd) return false;
