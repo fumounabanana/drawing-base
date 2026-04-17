@@ -240,25 +240,41 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
                 <input value={editForm[key]||""} onChange={e=>setEditForm(prev=>({...prev,[key]:e.target.value}))} placeholder={placeholder||""} style={inp}/>
               </div>
             ))}
-            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10 }}>
+            <div style={{ marginBottom:10 }}>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>客先</div>
+              <select value={editForm.client||""} onChange={e=>setEditForm(prev=>({...prev,client:e.target.value}))} style={inp}>
+                {clientNames.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom:10 }}>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>工程（複数選択可）</div>
+              <StageSelector value={editForm.stages||[]} onChange={v=>setEditForm(prev=>({...prev,stages:v}))}/>
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14 }}>
               <div>
-                <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>客先</div>
-                <select value={editForm.client||""} onChange={e=>setEditForm(prev=>({...prev,client:e.target.value}))} style={inp}>
-                  {clientNames.map(c=><option key={c}>{c}</option>)}
-                </select>
+                <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>工事・製作予定日</div>
+                <input type="date" value={editForm.scheduled_date||""} onChange={e=>setEditForm(prev=>({...prev,scheduled_date:e.target.value}))} style={inp}/>
               </div>
               <div>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>更新日</div>
                 <input type="date" value={editForm.date||""} onChange={e=>setEditForm(prev=>({...prev,date:e.target.value}))} style={inp}/>
               </div>
             </div>
-            <div style={{ marginBottom:10 }}>
-              <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>工程（複数選択可）</div>
-              <StageSelector value={editForm.stages||[]} onChange={v=>setEditForm(prev=>({...prev,stages:v}))}/>
-            </div>
             <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>工事・製作予定日</div>
-              <input type="date" value={editForm.scheduled_date||""} onChange={e=>setEditForm(prev=>({...prev,scheduled_date:e.target.value}))} style={inp}/>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>製作者</div>
+              <div style={{ display:"flex",gap:8,marginBottom:8 }}>
+                {["社内","浮池工業","その他"].map(opt=>(
+                  <button key={opt} type="button"
+                    onClick={()=>setEditForm(prev=>({...prev,maker:opt,maker_other:opt!=="その他"?"":prev.maker_other}))}
+                    style={{ flex:1,padding:"8px 4px",borderRadius:8,border:`2px solid ${(editForm.maker||"社内")===opt?"#3b82f6":"#334155"}`,background:(editForm.maker||"社内")===opt?"rgba(59,130,246,0.12)":"transparent",color:(editForm.maker||"社内")===opt?"#60a5fa":"#64748b",fontSize:12,fontWeight:(editForm.maker||"社内")===opt?700:400,cursor:"pointer" }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              {(editForm.maker||"社内")==="その他" && (
+                <input value={editForm.maker_other||""} onChange={e=>setEditForm(prev=>({...prev,maker_other:e.target.value}))}
+                  placeholder="会社名を入力..." style={inp}/>
+              )}
             </div>
             <div style={{ marginBottom:14 }}>
               <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>製作状況</div>
@@ -302,12 +318,16 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
                 {stages.map(s=>{ const sc=stageColors[s]||{}; return <span key={s} style={{ fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,background:sc.bg,color:sc.text }}>{s}</span>; })}
               </div>
             )}
-            {d.scheduled_date && (
-              <div style={{ background:"#0f172a",borderRadius:8,padding:"8px 12px",marginBottom:12,border:"1px solid #1e3a5f",display:"flex",alignItems:"center",gap:8 }}>
-                <span style={{ fontSize:14 }}>📅</span>
-                <div><div style={{ fontSize:10,color:"#475569" }}>工事・製作予定日</div><div style={{ fontSize:13,color:"#60a5fa",fontWeight:600 }}>{d.scheduled_date}</div></div>
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12 }}>
+              <div style={{ background:"#0f172a",borderRadius:8,padding:"10px 12px",border:"1px solid #1e3a5f" }}>
+                <div style={{ fontSize:10,color:"#475569",marginBottom:2 }}>📅 工事・製作予定日</div>
+                <div style={{ fontSize:12,color:"#60a5fa",fontWeight:600 }}>{d.scheduled_date||"—"}</div>
               </div>
-            )}
+              <div style={{ background:"#0f172a",borderRadius:8,padding:"10px 12px" }}>
+                <div style={{ fontSize:10,color:"#475569",marginBottom:2 }}>更新日</div>
+                <div style={{ fontSize:12,color:"#cbd5e1",fontWeight:500 }}>{d.date||"—"}</div>
+              </div>
+            </div>
             <div style={{ background:"#0f172a",borderRadius:10,border:"1px solid #1e3a5f",marginBottom:14,overflow:"hidden" }}>
               <div style={{ padding:"10px 14px",fontSize:11,fontWeight:600,color:"#64748b",borderBottom:"1px solid #1e293b" }}>添付ファイル（{files.length}件）</div>
               {files.length===0 ? (
@@ -354,12 +374,16 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
               {d.prod_status==="none" && <div style={{ fontSize:12,color:"#ef4444",padding:"6px 10px",background:"rgba(239,68,68,0.08)",borderRadius:8 }}>未製作 — 製作・工事が始まったらステータスを更新してください</div>}
             </div>
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12 }}>
-              {[["更新日",d.date],["担当者",d.uploader]].map(([label,value])=>(
-                <div key={label} style={{ background:"#0f172a",borderRadius:8,padding:"10px 12px" }}>
-                  <div style={{ fontSize:10,color:"#475569",marginBottom:2 }}>{label}</div>
-                  <div style={{ fontSize:12,color:"#cbd5e1",fontWeight:500 }}>{value||"—"}</div>
+              <div style={{ background:"#0f172a",borderRadius:8,padding:"10px 12px" }}>
+                <div style={{ fontSize:10,color:"#475569",marginBottom:2 }}>製作者</div>
+                <div style={{ fontSize:12,color:"#cbd5e1",fontWeight:500 }}>
+                  {d.maker||"社内"}{(d.maker==="その他"&&d.maker_other)?`（${d.maker_other}）`:""}
                 </div>
-              ))}
+              </div>
+              <div style={{ background:"#0f172a",borderRadius:8,padding:"10px 12px" }}>
+                <div style={{ fontSize:10,color:"#475569",marginBottom:2 }}>担当者</div>
+                <div style={{ fontSize:12,color:"#cbd5e1",fontWeight:500 }}>{d.uploader||"—"}</div>
+              </div>
             </div>
             {(d.tags||[]).length>0 && (
               <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:12 }}>
@@ -421,7 +445,7 @@ export default function App() {
   const [uploadFiles, setUploadFiles]         = useState([]);
   const [uploading, setUploading]             = useState(false);
   const [pendingCategory, setPendingCategory] = useState("図面");
-  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"wip", prod_date:"", scheduled_date:"", memo:"" });
+  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"wip", prod_date:"", scheduled_date:"", memo:"", maker:"社内", maker_other:"" });
   const fileRef = useRef();
 
   useEffect(() => { loadAll(); }, []);
@@ -490,10 +514,12 @@ export default function App() {
       scheduled_date:uploadForm.scheduled_date||null,
       has_file:uploadedFiles.length>0, file_path:uploadedFiles[0]?.path||null, file_paths:uploadedFiles,
       memo:           uploadForm.memo||"",
+      maker:          uploadForm.maker||"社内",
+      maker_other:    uploadForm.maker_other||"",
     });
     if (!error) { await loadAll(); showSave("saved"); } else showSave("error");
     setShowUpload(false); setUploadFiles([]); setUploading(false);
-    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"wip",prod_date:"",scheduled_date:"",memo:""});
+    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"wip",prod_date:"",scheduled_date:"",memo:"",maker:"社内",maker_other:""});
   };
 
   const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditMode(true); };
@@ -506,6 +532,8 @@ export default function App() {
       prod_status:editForm.prod_status, prod_date:editForm.prod_date||null,
       scheduled_date:editForm.scheduled_date||null,
       memo:editForm.memo||"",
+      maker:editForm.maker||"社内",
+      maker_other:editForm.maker_other||"",
     };
     showSave("saving");
     const {error}=await supabase.from("drawings").update(payload).eq("id",id);
@@ -939,6 +967,22 @@ export default function App() {
                 <div style={{ fontSize:11,color:"#f59e0b",marginBottom:3 }}>製作・工事予定日</div>
                 <input type="date" value={uploadForm.prod_date} onChange={e=>setUploadForm(p=>({...p,prod_date:e.target.value}))} style={inp}/>
               </>)}
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:6 }}>製作者</div>
+              <div style={{ display:"flex",gap:8,marginBottom:8 }}>
+                {["社内","浮池工業","その他"].map(opt=>(
+                  <button key={opt} type="button"
+                    onClick={()=>setUploadForm(p=>({...p,maker:opt,maker_other:opt!=="その他"?"":p.maker_other}))}
+                    style={{ flex:1,padding:"8px 4px",borderRadius:8,border:`2px solid ${(uploadForm.maker||"社内")===opt?"#3b82f6":"#334155"}`,background:(uploadForm.maker||"社内")===opt?"rgba(59,130,246,0.12)":"transparent",color:(uploadForm.maker||"社内")===opt?"#60a5fa":"#64748b",fontSize:12,fontWeight:(uploadForm.maker||"社内")===opt?700:400,cursor:"pointer" }}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              {(uploadForm.maker||"社内")==="その他" && (
+                <input value={uploadForm.maker_other||""} onChange={e=>setUploadForm(p=>({...p,maker_other:e.target.value}))}
+                  placeholder="会社名を入力..." style={inp}/>
+              )}
             </div>
             <div style={{ marginBottom:14 }}>
               <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>📝 メモ（任意）</div>
