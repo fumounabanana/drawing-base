@@ -16,9 +16,9 @@ const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 11 }, (_, i) => currentYear - 5 + i);
 
 const PROD_STATUS = {
-  done: { label: "製作・工事完了", bg: "#dcfce7", text: "#166534", dot: "#22c55e" },
-  none: { label: "未製作",         bg: "#fee2e2", text: "#991b1b", dot: "#ef4444" },
-  na:   { label: "製作なし",       bg: "#f1f5f9", text: "#475569", dot: "#94a3b8" },
+  done: { label: "納品済・工事完了",   bg: "#dcfce7", text: "#166534", dot: "#22c55e" },
+  wip:  { label: "製作中・工事予定",   bg: "#fef3c7", text: "#92400e", dot: "#f59e0b" },
+  none: { label: "未製作",             bg: "#fee2e2", text: "#991b1b", dot: "#ef4444" },
 };
 const stageColors = {
   "製作":         { bg: "#dcfce7", text: "#166634" },
@@ -95,7 +95,8 @@ function DrawingCard({ drawing, onClick }) {
       <div style={{ fontSize:13,fontWeight:600,color:"#f1f5f9",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{drawing.name}</div>
       <div style={{ fontSize:11,color:"#475569",marginBottom:5 }}>{drawing.number} · {drawing.revision}</div>
       <div style={{ fontSize:11,color:"#64748b",marginBottom:7 }}>🏢 {drawing.client}</div>
-      {drawing.scheduled_date && <div style={{ fontSize:10,color:"#64748b",marginBottom:6 }}>📅 予定：{drawing.scheduled_date}</div>}
+      {(drawing.prod_status==="wip"&&drawing.prod_date) && <div style={{ fontSize:10,color:"#f59e0b",marginBottom:6 }}>🔨 予定日：{drawing.prod_date}</div>}
+      {drawing.scheduled_date && <div style={{ fontSize:10,color:"#64748b",marginBottom:6 }}>📅 工事日：{drawing.scheduled_date}</div>}
       <div style={{ marginBottom:7 }}><ProdBadge prodStatus={drawing.prod_status} prodDate={drawing.prod_date}/></div>
       <div style={{ display:"flex",gap:4,flexWrap:"wrap" }}>
         {stages.map(s=>{ const sc=stageColors[s]||{}; return <span key={s} style={{ fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:20,background:sc.bg,color:sc.text }}>{s}</span>; })}
@@ -264,7 +265,7 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
               <div style={{ display:"flex",gap:6,marginBottom:8,flexWrap:"wrap" }}>
                 {Object.entries(PROD_STATUS).map(([key,info])=>(
                   <button key={key} type="button"
-                    onClick={()=>setEditForm(prev=>({...prev,prod_status:key,prod_date:key==="done"?(prev.prod_date||new Date().toISOString().split("T")[0]):""}))}
+                    onClick={()=>setEditForm(prev=>({...prev,prod_status:key,prod_date:(key==="done"||key==="wip")?(prev.prod_date||new Date().toISOString().split("T")[0]):""}))}
                     style={{ flex:1,padding:"8px 4px",borderRadius:8,border:`2px solid ${editForm.prod_status===key?info.dot:"#334155"}`,background:editForm.prod_status===key?info.bg:"transparent",color:editForm.prod_status===key?info.text:"#64748b",fontSize:10,cursor:"pointer",minWidth:80 }}>
                     {info.label}
                   </button>
@@ -272,6 +273,10 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
               </div>
               {editForm.prod_status==="done" && (<>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>完了日</div>
+                <input type="date" value={editForm.prod_date||""} onChange={e=>setEditForm(prev=>({...prev,prod_date:e.target.value}))} style={inp}/>
+              </>)}
+              {editForm.prod_status==="wip" && (<>
+                <div style={{ fontSize:11,color:"#f59e0b",marginBottom:3 }}>製作・工事予定日</div>
                 <input type="date" value={editForm.prod_date||""} onChange={e=>setEditForm(prev=>({...prev,prod_date:e.target.value}))} style={inp}/>
               </>)}
             </div>
@@ -332,9 +337,9 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
               <div style={{ display:"flex",gap:6,marginBottom:10,flexWrap:"wrap" }}>
                 {Object.entries(PROD_STATUS).map(([key,info])=>(
                   <button key={key} type="button"
-                    onClick={()=>onUpdateProd(d.id,key,key==="done"?(d.prod_date||new Date().toISOString().split("T")[0]):"")}
+                    onClick={()=>onUpdateProd(d.id,key,(key==="done"||key==="wip")?(d.prod_date||new Date().toISOString().split("T")[0]):"")}
                     style={{ flex:1,padding:"9px 4px",borderRadius:8,border:`2px solid ${d.prod_status===key?info.dot:"#334155"}`,background:d.prod_status===key?info.bg:"transparent",color:d.prod_status===key?info.text:"#64748b",fontWeight:d.prod_status===key?700:400,fontSize:10,cursor:"pointer",minWidth:80 }}>
-                    <div style={{ fontSize:12,marginBottom:2 }}>{key==="done"?"✅":key==="none"?"⏳":"—"}</div>{info.label}
+                    <div style={{ fontSize:12,marginBottom:2 }}>{key==="done"?"✅":key==="wip"?"🔨":"⏸"}</div>{info.label}
                   </button>
                 ))}
               </div>
@@ -342,8 +347,11 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:4 }}>完了日</div>
                 <input type="date" value={d.prod_date||""} onChange={e=>onUpdateProd(d.id,"done",e.target.value)} style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"8px 12px",color:"#e2e8f0",fontSize:13,width:"100%",boxSizing:"border-box" }}/>
               </>)}
-              {d.prod_status==="none" && <div style={{ fontSize:12,color:"#ef4444",padding:"6px 10px",background:"rgba(239,68,68,0.08)",borderRadius:8 }}>未製作{d.scheduled_date?` — 予定日：${d.scheduled_date}`:" — 完了後に更新してください"}</div>}
-              {d.prod_status==="na"   && <div style={{ fontSize:12,color:"#94a3b8",padding:"6px 10px",background:"rgba(148,163,184,0.08)",borderRadius:8 }}>製作対象外です</div>}
+              {d.prod_status==="wip" && (<>
+                <div style={{ fontSize:11,color:"#f59e0b",marginBottom:4 }}>製作・工事予定日</div>
+                <input type="date" value={d.prod_date||""} onChange={e=>onUpdateProd(d.id,"wip",e.target.value)} style={{ background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"8px 12px",color:"#e2e8f0",fontSize:13,width:"100%",boxSizing:"border-box" }}/>
+              </>)}
+              {d.prod_status==="none" && <div style={{ fontSize:12,color:"#ef4444",padding:"6px 10px",background:"rgba(239,68,68,0.08)",borderRadius:8 }}>未製作 — 製作・工事が始まったらステータスを更新してください</div>}
             </div>
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12 }}>
               {[["更新日",d.date],["担当者",d.uploader]].map(([label,value])=>(
@@ -413,7 +421,7 @@ export default function App() {
   const [uploadFiles, setUploadFiles]         = useState([]);
   const [uploading, setUploading]             = useState(false);
   const [pendingCategory, setPendingCategory] = useState("図面");
-  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"none", prod_date:"", scheduled_date:"", memo:"" });
+  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"wip", prod_date:"", scheduled_date:"", memo:"" });
   const fileRef = useRef();
 
   useEffect(() => { loadAll(); }, []);
@@ -485,7 +493,7 @@ export default function App() {
     });
     if (!error) { await loadAll(); showSave("saved"); } else showSave("error");
     setShowUpload(false); setUploadFiles([]); setUploading(false);
-    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"none",prod_date:"",scheduled_date:"",memo:""});
+    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"wip",prod_date:"",scheduled_date:"",memo:""});
   };
 
   const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditMode(true); };
@@ -649,7 +657,7 @@ export default function App() {
         </button>
       ))}
       <div style={{ padding:"20px 16px 8px",fontSize:11,fontWeight:700,color:"#64748b",letterSpacing:"0.08em" }}>製作状況</div>
-      {[["","全て"],["done","製作・工事完了"],["none","未製作"],["na","製作なし"]].map(([val,label])=>(
+      {[["","全て"],["done","納品済・工事完了"],["wip","製作中・工事予定"],["none","未製作"]].map(([val,label])=>(
         <button key={val} onClick={()=>{setFilterProd(val);setShowSidebar(false);}}
           style={{ display:"block",width:"100%",textAlign:"left",padding:"9px 20px",background:filterProd===val?"#1d4ed8":"transparent",color:filterProd===val?"#fff":"#94a3b8",border:"none",cursor:"pointer",fontSize:13,borderLeft:filterProd===val?"3px solid #60a5fa":"3px solid transparent" }}>
           {val&&<span style={{ display:"inline-block",width:7,height:7,borderRadius:"50%",background:PROD_STATUS[val]?.dot,marginRight:7,verticalAlign:"middle" }}/>}{label}
@@ -917,7 +925,7 @@ export default function App() {
               <div style={{ display:"flex",gap:6,marginBottom:8,flexWrap:"wrap" }}>
                 {Object.entries(PROD_STATUS).map(([key,info])=>(
                   <button key={key} type="button"
-                    onClick={()=>setUploadForm(p=>({...p,prod_status:key,prod_date:key==="done"?(p.prod_date||new Date().toISOString().split("T")[0]):""}))}
+                    onClick={()=>setUploadForm(p=>({...p,prod_status:key,prod_date:(key==="done"||key==="wip")?(p.prod_date||new Date().toISOString().split("T")[0]):""}))}
                     style={{ flex:1,padding:"8px 4px",borderRadius:8,border:`2px solid ${uploadForm.prod_status===key?info.dot:"#334155"}`,background:uploadForm.prod_status===key?info.bg:"transparent",color:uploadForm.prod_status===key?info.text:"#64748b",fontSize:10,cursor:"pointer",minWidth:80 }}>
                     {info.label}
                   </button>
@@ -925,6 +933,10 @@ export default function App() {
               </div>
               {uploadForm.prod_status==="done" && (<>
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>完了日</div>
+                <input type="date" value={uploadForm.prod_date} onChange={e=>setUploadForm(p=>({...p,prod_date:e.target.value}))} style={inp}/>
+              </>)}
+              {uploadForm.prod_status==="wip" && (<>
+                <div style={{ fontSize:11,color:"#f59e0b",marginBottom:3 }}>製作・工事予定日</div>
                 <input type="date" value={uploadForm.prod_date} onChange={e=>setUploadForm(p=>({...p,prod_date:e.target.value}))} style={inp}/>
               </>)}
             </div>
