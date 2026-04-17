@@ -275,6 +275,13 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
                 <input type="date" value={editForm.prod_date||""} onChange={e=>setEditForm(prev=>({...prev,prod_date:e.target.value}))} style={inp}/>
               </>)}
             </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>📝 メモ</div>
+              <textarea value={editForm.memo||""} onChange={e=>setEditForm(prev=>({...prev,memo:e.target.value}))}
+                placeholder="備考・メモを入力..."
+                rows={4}
+                style={{ background:"#0f172a",border:"1px solid #334155",borderRadius:8,padding:"9px 12px",color:"#e2e8f0",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box",resize:"vertical",lineHeight:1.6 }}/>
+            </div>
             <div style={{ display:"flex",gap:10,marginBottom:10 }}>
               <button onClick={onSaveEdit}   style={{ flex:1,background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"12px 0",fontWeight:700,fontSize:13,cursor:"pointer" }}>保存</button>
               <button onClick={onCancelEdit} style={{ flex:1,background:"#334155",color:"#94a3b8",border:"none",borderRadius:8,padding:"12px 0",fontWeight:600,fontSize:13,cursor:"pointer" }}>キャンセル</button>
@@ -347,8 +354,20 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
               ))}
             </div>
             {(d.tags||[]).length>0 && (
-              <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:12 }}>
                 {d.tags.map(t=><span key={t} style={{ background:"#0f172a",border:"1px solid #334155",borderRadius:20,padding:"3px 10px",fontSize:11,color:"#64748b" }}>#{t}</span>)}
+              </div>
+            )}
+            {/* メモ表示 */}
+            {d.memo ? (
+              <div style={{ background:"#0f172a",borderRadius:10,padding:14,border:"1px solid #1e3a5f" }}>
+                <div style={{ fontSize:11,color:"#64748b",marginBottom:8,fontWeight:600 }}>📝 メモ</div>
+                <div style={{ fontSize:13,color:"#cbd5e1",lineHeight:1.7,whiteSpace:"pre-wrap" }}>{d.memo}</div>
+              </div>
+            ) : (
+              <div style={{ background:"#0f172a",borderRadius:10,padding:"10px 14px",border:"1px solid #1e293b",cursor:"pointer" }}
+                onClick={()=>onStartEdit(d)}>
+                <div style={{ fontSize:12,color:"#334155" }}>📝 メモを追加（編集ボタンから入力できます）</div>
               </div>
             )}
           </div>
@@ -394,7 +413,7 @@ export default function App() {
   const [uploadFiles, setUploadFiles]         = useState([]);
   const [uploading, setUploading]             = useState(false);
   const [pendingCategory, setPendingCategory] = useState("図面");
-  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"none", prod_date:"", scheduled_date:"" });
+  const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"none", prod_date:"", scheduled_date:"", memo:"" });
   const fileRef = useRef();
 
   useEffect(() => { loadAll(); }, []);
@@ -462,10 +481,11 @@ export default function App() {
       prod_status:uploadForm.prod_status, prod_date:uploadForm.prod_date,
       scheduled_date:uploadForm.scheduled_date||null,
       has_file:uploadedFiles.length>0, file_path:uploadedFiles[0]?.path||null, file_paths:uploadedFiles,
+      memo:           uploadForm.memo||"",
     });
     if (!error) { await loadAll(); showSave("saved"); } else showSave("error");
     setShowUpload(false); setUploadFiles([]); setUploading(false);
-    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"none",prod_date:"",scheduled_date:""});
+    setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"none",prod_date:"",scheduled_date:"",memo:""});
   };
 
   const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditMode(true); };
@@ -477,6 +497,7 @@ export default function App() {
       stage:stages, tags:tagsStr.split(",").map(t=>t.trim()).filter(Boolean),
       prod_status:editForm.prod_status, prod_date:editForm.prod_date||null,
       scheduled_date:editForm.scheduled_date||null,
+      memo:editForm.memo||"",
     };
     showSave("saving");
     const {error}=await supabase.from("drawings").update(payload).eq("id",id);
@@ -906,6 +927,13 @@ export default function App() {
                 <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>完了日</div>
                 <input type="date" value={uploadForm.prod_date} onChange={e=>setUploadForm(p=>({...p,prod_date:e.target.value}))} style={inp}/>
               </>)}
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>📝 メモ（任意）</div>
+              <textarea value={uploadForm.memo||""} onChange={e=>setUploadForm(p=>({...p,memo:e.target.value}))}
+                placeholder="備考・メモを入力..."
+                rows={3}
+                style={{ background:"#0f172a",border:"1px solid #334155",borderRadius:8,padding:"9px 12px",color:"#e2e8f0",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box",resize:"vertical",lineHeight:1.6 }}/>
             </div>
             <button onClick={handleUpload} disabled={!uploadForm.name||uploading}
               style={{ width:"100%",background:(!uploadForm.name||uploading)?"#1e3a5f":"#1d4ed8",color:(!uploadForm.name||uploading)?"#475569":"#fff",border:"none",borderRadius:10,padding:"13px 0",fontWeight:700,fontSize:14,cursor:(!uploadForm.name||uploading)?"not-allowed":"pointer" }}>
