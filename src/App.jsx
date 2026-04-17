@@ -216,11 +216,12 @@ function StageSelector({ value, onChange }) {
 }
 
 // DetailSheet（App外で定義）
-function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, onClose, onStartEdit, onSaveEdit, onCancelEdit, onConfirmDelete, onUpdateProd, onPreview, onDownload }) {
+function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, onClose, onStartEdit, onSaveEdit, onCancelEdit, onConfirmDelete, onUpdateProd, onPreview, onDownload, editAddFiles, setEditAddFiles, editPendingCategory, setEditPendingCategory, fileCategories }) {
   if (!selected) return null;
-  const d      = editMode ? editForm : selected;
-  const files  = d.file_paths || [];
-  const stages = toStageArray(d.stage);
+  const d         = editMode ? editForm : selected;
+  const files     = d.file_paths || [];
+  const stages    = toStageArray(d.stage);
+  const editFileRef = useRef(null);
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:50,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={onClose}>
       <div style={{ background:"#1e293b",borderRadius:"16px 16px 0 0",padding:"20px 18px 32px",width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -8px 40px rgba(0,0,0,0.5)" }} onClick={e=>e.stopPropagation()}>
@@ -295,6 +296,46 @@ function DetailSheet({ selected, editMode, editForm, setEditForm, clientNames, o
                 <div style={{ fontSize:11,color:"#f59e0b",marginBottom:3 }}>製作・工事予定日</div>
                 <input type="date" value={editForm.prod_date||""} onChange={e=>setEditForm(prev=>({...prev,prod_date:e.target.value}))} style={inp}/>
               </>)}
+            </div>
+            {/* ファイル追加エリア */}
+            <div style={{ background:"#0f172a",borderRadius:10,border:"1px solid #334155",marginBottom:14,overflow:"hidden" }}>
+              <div style={{ padding:"10px 14px",fontSize:11,fontWeight:600,color:"#64748b",borderBottom:"1px solid #1e293b",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                <span>ファイルを追加（既存ファイルに追記）</span>
+                <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+                  <select value={editPendingCategory||"図面"} onChange={e=>setEditPendingCategory(e.target.value)}
+                    style={{ background:"#1e293b",border:"1px solid #334155",color:"#e2e8f0",borderRadius:6,padding:"3px 8px",fontSize:11,cursor:"pointer" }}>
+                    {(fileCategories||[]).map(c=><option key={c}>{c}</option>)}
+                  </select>
+                  <button type="button" onClick={()=>editFileRef.current?.click()}
+                    style={{ background:"#1d4ed8",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer" }}>+ 追加</button>
+                </div>
+              </div>
+              <input ref={editFileRef} type="file" accept=".pdf,.dwg,.dxf,.xlsx,.xls,.docx,.png,.jpg,.jpeg" multiple
+                style={{ display:"none" }}
+                onChange={e=>{
+                  const cat = editPendingCategory||"図面";
+                  const newFiles = Array.from(e.target.files).map(f=>({file:f,category:cat}));
+                  setEditAddFiles(prev=>[...prev,...newFiles]);
+                  e.target.value="";
+                }}/>
+              {(!editAddFiles||editAddFiles.length===0) ? (
+                <div style={{ padding:"12px 14px",fontSize:12,color:"#475569",textAlign:"center" }}>
+                  追加するファイルをここで選択（保存時にアップロードされます）
+                </div>
+              ) : (editAddFiles||[]).map((uf,i)=>{
+                const cc=(categoryColors||{})[uf.category]||{bg:"#f1f5f9",text:"#475569"};
+                return (
+                  <div key={i} style={{ display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderTop:"1px solid #1e293b" }}>
+                    <span style={{ fontSize:16,flexShrink:0 }}>📄</span>
+                    <div style={{ flex:1,minWidth:0 }}>
+                      <div style={{ fontSize:12,color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{uf.file.name}</div>
+                    </div>
+                    <span style={{ fontSize:10,padding:"1px 6px",borderRadius:10,background:cc.bg,color:cc.text,flexShrink:0 }}>{uf.category}</span>
+                    <button type="button" onClick={()=>setEditAddFiles(prev=>prev.filter((_,j)=>j!==i))}
+                      style={{ background:"#7f1d1d",border:"none",borderRadius:6,color:"#fca5a5",width:22,height:22,cursor:"pointer",fontSize:11,flexShrink:0 }}>×</button>
+                  </div>
+                );
+              })}
             </div>
             <div style={{ marginBottom:14 }}>
               <div style={{ fontSize:11,color:"#64748b",marginBottom:3 }}>📝 メモ</div>
@@ -445,6 +486,8 @@ export default function App() {
   const [uploadFiles, setUploadFiles]         = useState([]);
   const [uploading, setUploading]             = useState(false);
   const [pendingCategory, setPendingCategory] = useState("図面");
+  const [editAddFiles, setEditAddFiles]       = useState([]);
+  const [editPendingCategory, setEditPendingCategory] = useState("図面");
   const [uploadForm, setUploadForm]           = useState({ name:"", number:"", client:"", stages:["製作"], tags:"", prod_status:"wip", prod_date:"", scheduled_date:"", memo:"", maker:"社内", maker_other:"" });
   const fileRef = useRef();
 
@@ -522,9 +565,20 @@ export default function App() {
     setUploadForm({name:"",number:"",client:clientNames[0]||"",stages:["製作"],tags:"",prod_status:"wip",prod_date:"",scheduled_date:"",memo:"",maker:"社内",maker_other:""});
   };
 
-  const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditMode(true); };
+  const startEdit = (d) => { setEditForm({...d, stages:toStageArray(d.stage), tagsStr:(d.tags||[]).join(", ")}); setEditAddFiles([]); setEditMode(true); };
   const saveEdit  = async () => {
     const {tagsStr,stages,id,created_at}=editForm;
+    // 追加ファイルのアップロード
+    const newUploaded=[];
+    for (const {file,category} of editAddFiles) {
+      try {
+        const sn=`${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+        const {error:ue}=await supabase.storage.from("drawings").upload(sn,file,{contentType:file.type});
+        if (!ue) newUploaded.push({path:sn,name:file.name,size:`${(file.size/1024/1024).toFixed(1)}MB`,category,ext:file.name.split(".").pop().toUpperCase()});
+      } catch {}
+    }
+    // 既存ファイルリストに追記
+    const mergedFiles=[...(editForm.file_paths||[]),...newUploaded];
     const payload={
       name:editForm.name, number:editForm.number, client:editForm.client,
       date:editForm.date, uploader:editForm.uploader, revision:editForm.revision,
@@ -534,16 +588,18 @@ export default function App() {
       memo:editForm.memo||"",
       maker:editForm.maker||"社内",
       maker_other:editForm.maker_other||"",
+      file_paths:mergedFiles,
+      has_file:mergedFiles.length>0,
     };
     showSave("saving");
     const {error}=await supabase.from("drawings").update(payload).eq("id",id);
     if (!error) {
       const updated={...editForm,...payload,id,created_at};
       setDrawings(ds=>ds.map(d=>d.id===id?updated:d));
-      setSelected(updated); setEditMode(false); showSave("saved");
+      setSelected(updated); setEditAddFiles([]); setEditMode(false); showSave("saved");
     } else { console.error("saveEdit:",error); showSave("error"); }
   };
-  const cancelEdit    = () => setEditMode(false);
+  const cancelEdit    = () => { setEditMode(false); setEditAddFiles([]); };
   const confirmDelete = (d) => setDeleteTarget(d);
   const executeDelete = async () => {
     if (!deleteTarget) return;
@@ -799,7 +855,10 @@ export default function App() {
         clientNames={clientNames} onClose={()=>{setSelected(null);setEditMode(false);}}
         onStartEdit={startEdit} onSaveEdit={saveEdit} onCancelEdit={cancelEdit}
         onConfirmDelete={confirmDelete} onUpdateProd={updateProd}
-        onPreview={handlePreview} onDownload={handleDownload}/>
+        onPreview={handlePreview} onDownload={handleDownload}
+        editAddFiles={editAddFiles} setEditAddFiles={setEditAddFiles}
+        editPendingCategory={editPendingCategory} setEditPendingCategory={setEditPendingCategory}
+        fileCategories={FILE_CATEGORIES}/>
       <PdfPreviewModal previewData={previewData} onClose={()=>setPreviewData(null)}/>
       {pwModal && <PasswordModal
         title={pwModal.action==="open"?"客先を管理":pwModal.action==="save"?"変更を保存":"並び順を保存"}
